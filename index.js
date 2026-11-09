@@ -197,14 +197,23 @@ export function apply(ctx) {
           const resolved = await resolveRow(ctx)
           if (resolved.message) return { ok: false, message: resolved.message }
           const detection = await detect()
+          const count = chromeToolCount(ctx)
+          const failed = resolved.row.fiberPhase === 'failed'
+          const loaded = resolved.row.enabled && count > 0
+          const message = loaded
+            ? `Chrome toolset loaded: ${count} mcp__chrome__* tools available.`
+            : failed
+              ? `Chrome toolset failed to load${resolved.row.diagnostic ? `: ${resolved.row.diagnostic}` : '.'}`
+              : resolved.row.enabled
+                ? "Chrome toolset is enabled but exposes no tools; run chrome_bridge with action 'on' to remount it."
+                : 'Chrome toolset not loaded.'
           return {
             ok: true,
-            message: resolved.row.enabled
-              ? `Chrome toolset loaded: ${chromeToolCount(ctx)} mcp__chrome__* tools available.`
-              : 'Chrome toolset not loaded.',
-            loaded: resolved.row.enabled,
+            message,
+            loaded,
+            enabled: resolved.row.enabled,
             fiberPhase: resolved.row.fiberPhase ?? null,
-            chromeTools: chromeToolCount(ctx),
+            chromeTools: count,
             diagnostic: resolved.row.diagnostic ?? null,
             server: detection.server ?? null,
             browser: detection.browser ?? null,

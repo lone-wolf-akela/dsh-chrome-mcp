@@ -18,8 +18,11 @@
         # launcher.mjs locates chrome-devtools-mcp and a Chromium-family browser
         # (Chrome, otherwise Edge), then runs the real MCP server. The path is
         # resolved from the profile so the bundle does not hard-code a user name.
+        # A plain file URL is used instead of require.resolve: DSH evaluates this
+        # expression outside the profile's CJS resolver, where a bare package
+        # specifier does not resolve.
         args:
-          - !!js 'process.getBuiltinModule("node:module").createRequire(new URL("cordis.yml", ctx.baseUrl)).resolve("@local/dsh-chrome-mcp/launcher.mjs")'
+          - !!js 'process.getBuiltinModule("node:url").fileURLToPath(new URL("node_modules/@local/dsh-chrome-mcp/launcher.mjs", ctx.baseUrl))'
           - '--headless'
           - '--isolated'
           - '--viewport=1280x720'

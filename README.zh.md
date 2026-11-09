@@ -93,7 +93,7 @@ plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
         env:
           ELECTRON_RUN_AS_NODE: '1'
         args:
-          - !!js 'process.getBuiltinModule("node:module").createRequire(new URL("cordis.yml", ctx.baseUrl)).resolve("@local/dsh-chrome-mcp/launcher.mjs")'
+          - !!js 'process.getBuiltinModule("node:url").fileURLToPath(new URL("node_modules/@local/dsh-chrome-mcp/launcher.mjs", ctx.baseUrl))'
           - '--headless'
           - '--isolated'
           - '--viewport=1280x720'
