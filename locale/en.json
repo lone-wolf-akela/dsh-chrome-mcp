@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Chrome DevTools bridge",
+    "description": "Loads the chrome-devtools-mcp browser toolset on demand through one cheap tool, so its ~32 browser tool schemas only enter requests while the agent is actually driving a browser."
+  }
+}

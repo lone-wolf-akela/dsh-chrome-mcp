@@ -1,0 +1,40 @@
+- insert:
+    # The browser toolset stays unmounted until a session asks for it: the model
+    # or the user calls the `chrome_bridge` tool, which flips this row on through
+    # Plugin Manager. Declared disabled here, so "off" is the default again once
+    # the profile-level enable override is removed.
+    - id: mcp-chrome
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: true
+      config:
+        serverName: chrome
+        transport: stdio
+        # Run DSH's own Node runtime, so the row does not depend on a system
+        # `node` being visible on the GUI app's PATH. Plain Node ignores the
+        # ELECTRON_RUN_AS_NODE variable; Electron honors it and behaves as Node.
+        command: !!js 'process.execPath'
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        # launcher.mjs locates chrome-devtools-mcp and a Chromium-family browser
+        # (Chrome, otherwise Edge), then runs the real MCP server. The path is
+        # resolved from the profile so the bundle does not hard-code a user name.
+        args:
+          - !!js 'process.getBuiltinModule("node:module").createRequire(new URL("cordis.yml", ctx.baseUrl)).resolve("@local/dsh-chrome-mcp/launcher.mjs")'
+          - '--headless'
+          - '--isolated'
+          - '--viewport=1280x720'
+          - '--no-usage-statistics'
+          - '--no-performance-crux'
+        # Lighthouse audits and trace capture can exceed the one-minute default.
+        toolCallTimeoutMs: 120000
+        # A row left enabled across a restart retries quietly instead of
+        # failing the composition; an explicit `on` probes the browser first.
+        failOnStartupError: false
+        reconnect:
+          initialDelayMs: 500
+          maxDelayMs: 30000
+          maxAttempts: 240
+
+    - id: chrome-bridge-control
+      name: '@local/dsh-chrome-mcp'
+      config: {}
