@@ -73,7 +73,7 @@ plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
 - `on` —— 探测浏览器，然后挂载 Chrome DevTools 工具集并连接。
 - `off` —— 卸载，释放上下文。
 - `status` —— 报告 `loaded`、`fiberPhase`、`chromeTools`、检测到的服务器/浏览器、当前配置，以及该行的诊断信息。
-- `probe` —— 只做一次浏览器握手（初始化、`tools/list`、`list_pages`）并报告，不挂载任何东西。
+- `probe` —— 只做一次浏览器握手（初始化、`tools/list`、`list_pages`）并报告，不挂载任何东西。它始终以无头模式运行，诊断时不会在桌面上闪窗。
 - `config` —— 读取浏览器外观/profile 设置；附加 `headless`、`isolated`、`userDataDir` 或 `viewport` 可持久化新值。
 
 挂载后，浏览器工具名为 `mcp__chrome__<tool>`，例如 `mcp__chrome__navigate_page`、`mcp__chrome__take_snapshot`、`mcp__chrome__take_screenshot`。1.x 版本的页面级工具要求 `pageId`：先调用 `mcp__chrome__list_pages`，再把返回的编号传进去。

@@ -73,7 +73,7 @@ Then start a session and call `chrome_bridge` with `action: 'on'`.
 - `on` — probe the browser, then mount the Chrome DevTools toolset and connect.
 - `off` — unmount it and free the context.
 - `status` — report `loaded`, `fiberPhase`, `chromeTools`, the detected server/browser, the stored config, and the row diagnostic.
-- `probe` — run the browser handshake once (initialize, `tools/list`, `list_pages`) and report, without mounting anything.
+- `probe` — run the browser handshake once (initialize, `tools/list`, `list_pages`) and report, without mounting anything. It always runs headless, so diagnostics never flash a window on your desktop.
 - `config` — read the browser appearance/profile settings; add `headless`, `isolated`, `userDataDir` or `viewport` to persist new ones.
 
 Once loaded, the browser tools are named `mcp__chrome__<tool>`, for example `mcp__chrome__navigate_page`, `mcp__chrome__take_snapshot`, `mcp__chrome__take_screenshot`. Version 1.x requires a `pageId` on page-scoped tools: call `mcp__chrome__list_pages` first, then pass the number it reports.

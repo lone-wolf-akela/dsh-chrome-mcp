@@ -22,7 +22,9 @@ const PATCH_ID = 'mcp-chrome'
 const TOOL_PREFIX = 'mcp__chrome__'
 const LAUNCHER = fileURLToPath(new URL('./launcher.mjs', import.meta.url))
 const LAUNCHER_ENV = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-const SERVER_ARGS = ['--no-usage-statistics', '--no-performance-crux']
+// The probe always runs headless: it validates the browser without flashing a
+// window on the user's desktop, whatever the stored config says.
+const SERVER_ARGS = ['--headless', '--no-usage-statistics', '--no-performance-crux']
 const DETECT_TIMEOUT_MS = 30_000
 const PROBE_TIMEOUT_MS = 180_000
 const TOOL_WAIT_MS = 20_000
