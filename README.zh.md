@@ -72,10 +72,37 @@ plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
 
 - `on` —— 探测浏览器，然后挂载 Chrome DevTools 工具集并连接。
 - `off` —— 卸载，释放上下文。
-- `status` —— 报告 `loaded`、`fiberPhase`、`chromeTools`、检测到的服务器/浏览器，以及该行的诊断信息。
+- `status` —— 报告 `loaded`、`fiberPhase`、`chromeTools`、检测到的服务器/浏览器、当前配置，以及该行的诊断信息。
 - `probe` —— 只做一次浏览器握手（初始化、`tools/list`、`list_pages`）并报告，不挂载任何东西。
+- `config` —— 读取浏览器外观/profile 设置；附加 `headless`、`isolated`、`userDataDir` 或 `viewport` 可持久化新值。
 
 挂载后，浏览器工具名为 `mcp__chrome__<tool>`，例如 `mcp__chrome__navigate_page`、`mcp__chrome__take_snapshot`、`mcp__chrome__take_screenshot`。1.x 版本的页面级工具要求 `pageId`：先调用 `mcp__chrome__list_pages`，再把返回的编号传进去。
+
+## 浏览器外观与 profile
+
+这些设置存放在 profile 级的 JSON 文件 `<profile>/chrome-mcp.json` 中，launcher 每次启动都会读取。通过 `chrome_bridge` 修改即可 —— 不用改包内文件，也不用重启 DSH：
+
+| 设置 | 默认 | 含义 |
+|---|---|---|
+| `headless` | `true` | 无界面运行；`false` 显示真实浏览器窗口 |
+| `isolated` | `true` | 每次启动使用一次性临时 profile |
+| `userDataDir` | `''` | 持久 profile 目录；优先于 `isolated` |
+| `viewport` | `1280x720` | 初始视口尺寸 |
+
+常见用法：
+
+```text
+# 人工观察 Agent 操作浏览器
+chrome_bridge action=config headless=false
+
+# 人工登录网银 + AI 操作：跨会话保留登录态与 Cookie
+chrome_bridge action=on headless=false userDataDir="D:\\dsh-chrome-profile"
+
+# 恢复隐私友好的默认值
+chrome_bridge action=config headless=true isolated=true userDataDir=""
+```
+
+`config`（以及带这些参数的 `on`）会持久化配置，并在工具集已挂载时自动重挂载，下一次浏览器启动立即生效。文件采用原子写入，并发会话不会读到半截配置。`cordis.patch.yml` 里显式写出的参数优先级仍高于配置文件。
 
 ## 配置
 
@@ -92,11 +119,9 @@ plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
         command: !!js 'process.execPath'
         env:
           ELECTRON_RUN_AS_NODE: '1'
+          DSH_CHROME_MCP_CONFIG: !!js 'process.getBuiltinModule("node:url").fileURLToPath(new URL("chrome-mcp.json", ctx.baseUrl))'
         args:
           - !!js 'process.getBuiltinModule("node:url").fileURLToPath(new URL("node_modules/@local/dsh-chrome-mcp/launcher.mjs", ctx.baseUrl))'
-          - '--headless'
-          - '--isolated'
-          - '--viewport=1280x720'
           - '--no-usage-statistics'
           - '--no-performance-crux'
         toolCallTimeoutMs: 120000
@@ -113,7 +138,8 @@ plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
 
 - `command` 与 `args[0]` 在加载时解析：用 DSH 自身的可执行文件以 Node 模式运行 `launcher.mjs`，launcher 路径从 profile 的 `node_modules` 解析，不写死用户名或 profile 名。
 - `serverName: chrome` 决定工具前缀：`mcp__chrome__<tool>`。
-- launcher 路径之后的参数会原样转发给 `chrome-devtools-mcp`。**删掉 `--headless` 并重启 DSH** 就能看到浏览器实际界面；`--isolated` 使用一次性临时 profile，不会碰你日常浏览器的数据。
+- `DSH_CHROME_MCP_CONFIG` 把 launcher 指向 profile 的 JSON 配置，由 `chrome_bridge action=config` 维护。浏览器参数（`headless`、`isolated`、`userDataDir`、`viewport`）都从该配置推导，因此不需要改这里。
+- launcher 路径之后的参数会原样转发给 `chrome-devtools-mcp`；显式传入的 `--headless`、`--userDataDir=<dir>` 等参数优先级高于配置文件。
 - 只有在调用方没有显式指定浏览器时，launcher 才追加 `--executablePath <浏览器>`。设置 `DSH_CHROME_CHANNEL=stable|beta|dev|canary` 可改用 Chrome 通道解析。
 - `--no-usage-statistics` 关闭服务器向 Google 上报使用统计；`--no-performance-crux` 阻止性能工具把 trace URL 发给 CrUX API。
 
@@ -127,7 +153,7 @@ plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
 
 - 在某个 profile 中首次使用时需要启动浏览器，冷启动需要几秒。
 - 每个 profile 只能有一个 `chrome` server name：该行按模块名加 patch id `mcp-chrome` 定位。
-- `--isolated` 意味着每个 DSH 会话都从全新的浏览器 profile 开始：不共享登录态和 Cookie。去掉该参数即可复用持久 profile 目录。
+- 默认的一次性 profile（`isolated: true`）让自动化不碰日常浏览器数据，但也意味着不保留登录态；人工登录场景请设置 `userDataDir`，该目录会保存登录态与 Cookie，应按敏感数据对待。
 - 读写本地文件的工具（`upload_file`、workspace 路径）默认被限制在系统临时目录内，因为 DSH 的 MCP 客户端不协商 MCP roots；可用 `--workspace <dir>` 放宽。
 - 浏览器操控能力很强：工具集挂载期间，Agent 可以查看和修改该浏览器实例中的任何内容。`off`（或结束会话）即可卸载。
 

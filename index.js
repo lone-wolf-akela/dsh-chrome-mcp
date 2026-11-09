@@ -13,6 +13,8 @@
  */
 
 import { spawn } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const MODULE_NAME = '@deepseek-ai/dsh-mcp-client'
@@ -20,25 +22,83 @@ const PATCH_ID = 'mcp-chrome'
 const TOOL_PREFIX = 'mcp__chrome__'
 const LAUNCHER = fileURLToPath(new URL('./launcher.mjs', import.meta.url))
 const LAUNCHER_ENV = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-const SERVER_ARGS = [
-  '--headless',
-  '--isolated',
-  '--viewport=1280x720',
-  '--no-usage-statistics',
-  '--no-performance-crux',
-]
+const SERVER_ARGS = ['--no-usage-statistics', '--no-performance-crux']
 const DETECT_TIMEOUT_MS = 30_000
 const PROBE_TIMEOUT_MS = 180_000
 const TOOL_WAIT_MS = 20_000
 
+/** Browser appearance/profile defaults; must match launcher.mjs. */
+const CONFIG_DEFAULTS = {
+  headless: true,
+  isolated: true,
+  userDataDir: '',
+  viewport: '1280x720',
+}
+
+const CONFIG_KEYS = ['headless', 'isolated', 'userDataDir', 'viewport']
+
+function configFile(ctx) {
+  const base = ctx?.baseUrl
+  if (typeof base !== 'string') return null
+  try {
+    return fileURLToPath(new URL('chrome-mcp.json', base))
+  } catch {
+    return null
+  }
+}
+
+function readConfig(file) {
+  const config = { ...CONFIG_DEFAULTS }
+  if (!file || !existsSync(file)) return { config, error: null }
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    if (typeof raw?.headless === 'boolean') config.headless = raw.headless
+    if (typeof raw?.isolated === 'boolean') config.isolated = raw.isolated
+    if (typeof raw?.userDataDir === 'string') config.userDataDir = raw.userDataDir.trim()
+    if (typeof raw?.viewport === 'string' && raw.viewport.trim()) config.viewport = raw.viewport.trim()
+    return { config, error: null }
+  } catch (error) {
+    return { config, error: String(error?.message ?? error) }
+  }
+}
+
+function mergeConfig(current, args) {
+  const next = { ...current }
+  if (typeof args?.headless === 'boolean') next.headless = args.headless
+  if (typeof args?.isolated === 'boolean') next.isolated = args.isolated
+  if (typeof args?.userDataDir === 'string') next.userDataDir = args.userDataDir.trim()
+  if (typeof args?.viewport === 'string' && args.viewport.trim()) next.viewport = args.viewport.trim()
+  // A named profile directory is a request for persistence; keep one owner.
+  if (next.userDataDir) next.isolated = false
+  return next
+}
+
+function writeConfig(file, config) {
+  mkdirSync(path.dirname(file), { recursive: true })
+  const temporary = `${file}.tmp`
+  writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  renameSync(temporary, file)
+}
+
+function describeConfig(config) {
+  const profile = config.userDataDir
+    ? `persistent profile ${config.userDataDir}`
+    : config.isolated
+      ? 'throw-away profile (--isolated)'
+      : 'default persistent profile'
+  return `${config.headless ? 'headless' : 'visible window'}, ${profile}, viewport ${config.viewport}`
+}
+
 export const inject = ['tools']
 
 const DESCRIPTION = [
-  'Loads or unloads the Chrome DevTools browser toolset (`mcp__chrome__*` tools).',
+  'Loads or unloads the Chrome DevTools browser toolset (`mcp__chrome__*` tools) and stores how the browser is shown.',
   '',
   'The browser toolset is NOT loaded by default, because its ~32 tool schemas would be sent with every request.',
   "Call this with action 'on' before any browser work (open pages, click, type, inspect the console or network, take screenshots, record performance traces), and with action 'off' when that work is finished so the context is freed again.",
   "'on' first probes the browser end to end: it launches chrome-devtools-mcp against the detected Chromium-family browser (Chrome or Edge), initializes MCP, lists its tools and opens a page. If that probe fails, the tool reports what to fix instead of mounting a connection that cannot work.",
+  "Defaults come from a profile-scoped config file: headless true (no window), isolated true (throw-away profile), viewport 1280x720. For human sign-in work pass headless=false to watch the browser, and userDataDir=\"<folder>\" to keep cookies and logins across sessions; any of these optional arguments persist to the config file and remount an already loaded toolset.",
+  "Use action 'config' alone to read the current settings without changing anything.",
   'Once loaded, page-scoped `mcp__chrome__*` tools take a `pageId` from `mcp__chrome__list_pages`; call that first.',
 ].join('\n')
 
@@ -47,9 +107,27 @@ const PARAMETERS = {
   properties: {
     action: {
       type: 'string',
-      enum: ['on', 'off', 'status', 'probe'],
+      enum: ['on', 'off', 'status', 'probe', 'config'],
       description:
-        "on: probe the browser, then mount the Chrome DevTools toolset. off: unmount it. status: report the current state without changing anything. probe: run the browser handshake once and report, without mounting or unmounting.",
+        "on: probe the browser, then mount the Chrome DevTools toolset. off: unmount it. status: report the current state without changing anything. probe: run the browser handshake once and report, without mounting or unmounting. config: read (or, with the optional fields, update and persist) how the browser is shown.",
+    },
+    headless: {
+      type: 'boolean',
+      description: 'Whether the browser runs without a window. Persisted for later launches; false shows the real window.',
+    },
+    isolated: {
+      type: 'boolean',
+      description:
+        'Whether each launch uses a throw-away browser profile. Ignored (turned off) when userDataDir is set.',
+    },
+    userDataDir: {
+      type: 'string',
+      description:
+        'Persistent browser profile directory to keep cookies and sign-ins across launches. An empty string clears it. Takes precedence over isolated.',
+    },
+    viewport: {
+      type: 'string',
+      description: "Initial viewport, for example '1280x720'.",
     },
   },
   required: ['action'],
@@ -91,13 +169,13 @@ async function waitForTools(ctx, timeoutMs = TOOL_WAIT_MS) {
 }
 
 /** Run launcher.mjs once and parse the JSON report it prints on stdout. */
-function runLauncher(extraArgs, timeoutMs) {
+function runLauncher(extraArgs, timeoutMs, env) {
   return new Promise(resolve => {
     let child
     try {
       child = spawn(process.execPath, [LAUNCHER, ...extraArgs], {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: LAUNCHER_ENV,
+        env: env ?? LAUNCHER_ENV,
         windowsHide: true,
       })
     } catch (error) {
@@ -148,8 +226,15 @@ function runLauncher(extraArgs, timeoutMs) {
   })
 }
 
-const detect = () => runLauncher(['--detect'], DETECT_TIMEOUT_MS)
-const probe = () => runLauncher(['--probe', ...SERVER_ARGS], PROBE_TIMEOUT_MS)
+function launcherEnv(ctx) {
+  const env = { ...LAUNCHER_ENV }
+  const file = configFile(ctx)
+  if (file) env.DSH_CHROME_MCP_CONFIG = file
+  return env
+}
+
+const detect = ctx => runLauncher(['--detect'], DETECT_TIMEOUT_MS, launcherEnv(ctx))
+const probe = ctx => runLauncher(['--probe', ...SERVER_ARGS], PROBE_TIMEOUT_MS, launcherEnv(ctx))
 
 async function resolveRow(ctx) {
   const manager = ctx.get('pluginManager')
@@ -174,7 +259,8 @@ function describeProbe(report) {
       ? `Chrome channel ${report.channel}`
       : 'browser'
   const page = report.page ? `, page ${report.page.pageId} "${report.page.title}"` : ''
-  return `${browser},${version}, ${report.tools} tools${page}`
+  const config = report.config ? `, ${describeConfig(report.config)}` : ''
+  return `${browser},${version}, ${report.tools} tools${page}${config}`
 }
 
 function probeFailure(report) {
@@ -196,7 +282,7 @@ export function apply(ctx) {
         if (action === 'status') {
           const resolved = await resolveRow(ctx)
           if (resolved.message) return { ok: false, message: resolved.message }
-          const detection = await detect()
+          const detection = await detect(ctx)
           const count = chromeToolCount(ctx)
           const failed = resolved.row.fiberPhase === 'failed'
           const loaded = resolved.row.enabled && count > 0
@@ -218,6 +304,7 @@ export function apply(ctx) {
             server: detection.server ?? null,
             browser: detection.browser ?? null,
             channel: detection.channel ?? null,
+            config: detection.config ?? null,
             discoveryError: detection.ok ? null : (detection.error ?? null),
           }
         }
@@ -244,29 +331,120 @@ export function apply(ctx) {
         }
 
         if (action === 'probe') {
-          const report = await probe()
+          const report = await probe(ctx)
           if (!report.ok) {
             return { ok: false, message: `Browser probe failed: ${probeFailure(report)}`, probe: report }
           }
           return { ok: true, message: `Browser probe succeeded: ${describeProbe(report)}.`, probe: report }
         }
 
+        if (action === 'config') {
+          const file = configFile(ctx)
+          if (!file) return { ok: false, message: 'Cannot resolve the profile directory for the Chrome config file.' }
+          const { config: current, error: readError } = readConfig(file)
+          const merged = mergeConfig(current, args)
+          const changed = JSON.stringify(merged) !== JSON.stringify(current)
+          if (!changed) {
+            return {
+              ok: true,
+              message: `Chrome config (${file}): ${describeConfig(merged)}.`,
+              config: merged,
+              configPath: file,
+              changed: false,
+              readError,
+            }
+          }
+          try {
+            writeConfig(file, merged)
+          } catch (error) {
+            return { ok: false, message: `Could not write ${file}: ${String(error?.message ?? error)}` }
+          }
+          const resolved = await resolveRow(ctx)
+          if (resolved.message) {
+            return { ok: false, message: resolved.message, config: merged, configPath: file, changed: true }
+          }
+          if (!resolved.row.enabled) {
+            return {
+              ok: true,
+              message: `Chrome config saved to ${file}: ${describeConfig(merged)}. It applies on the next chrome_bridge action 'on'.`,
+              config: merged,
+              configPath: file,
+              changed: true,
+              remounted: false,
+            }
+          }
+          await resolved.manager.setPluginEnabled(resolved.row.entryId, false)
+          const enabled = await resolved.manager.setPluginEnabled(resolved.row.entryId, true)
+          if (enabled.application !== 'applied') {
+            return {
+              ok: false,
+              message: `Config saved, but remounting the toolset failed: ${enabled.application}${enabled.error ? ` (${enabled.error.code})` : ''}. Run chrome_bridge action 'on' to retry.`,
+              config: merged,
+              configPath: file,
+              changed: true,
+            }
+          }
+          const count = await waitForTools(ctx)
+          if (count === 0) {
+            return {
+              ok: false,
+              message: "Config saved and the row remounted, but it registered no tools. Run chrome_bridge action 'probe' to diagnose the browser.",
+              config: merged,
+              configPath: file,
+              changed: true,
+              chromeTools: 0,
+            }
+          }
+          return {
+            ok: true,
+            message: `Chrome config saved to ${file}: ${describeConfig(merged)}. Toolset remounted with the new settings (${count} tools).`,
+            config: merged,
+            configPath: file,
+            changed: true,
+            remounted: true,
+            chromeTools: count,
+          }
+        }
+
         if (action !== 'on') {
-          return { ok: false, message: "Unknown action; use 'on', 'off', 'status' or 'probe'." }
+          return { ok: false, message: "Unknown action; use 'on', 'off', 'status', 'probe' or 'config'." }
         }
 
         const resolved = await resolveRow(ctx)
         if (resolved.message) return { ok: false, message: resolved.message }
 
-        if (resolved.row.enabled && chromeToolCount(ctx) > 0) {
-          return {
-            ok: true,
-            message: `Chrome toolset already loaded: ${chromeToolCount(ctx)} mcp__chrome__* tools available. Call chrome_bridge with action 'off' when the browser work is done.`,
-            chromeTools: chromeToolCount(ctx),
+        const file = configFile(ctx)
+        const overrides = {}
+        for (const key of CONFIG_KEYS) {
+          if (args?.[key] !== undefined) overrides[key] = args[key]
+        }
+        const hasOverrides = Object.keys(overrides).length > 0
+        let configChanged = false
+        if (hasOverrides) {
+          if (!file) return { ok: false, message: 'Cannot resolve the profile directory for the Chrome config file.' }
+          const { config: current } = readConfig(file)
+          const merged = mergeConfig(current, overrides)
+          configChanged = JSON.stringify(merged) !== JSON.stringify(current)
+          if (configChanged) {
+            try {
+              writeConfig(file, merged)
+            } catch (error) {
+              return { ok: false, message: `Could not write ${file}: ${String(error?.message ?? error)}` }
+            }
           }
         }
 
-        const detection = await detect()
+        if (!configChanged && resolved.row.enabled && chromeToolCount(ctx) > 0) {
+          const { config: current } = readConfig(file)
+          return {
+            ok: true,
+            message: `Chrome toolset already loaded: ${chromeToolCount(ctx)} mcp__chrome__* tools available (${describeConfig(current)}). Call chrome_bridge with action 'off' when the browser work is done.`,
+            chromeTools: chromeToolCount(ctx),
+            config: current,
+          }
+        }
+
+        const detection = await detect(ctx)
         if (!detection.ok || !detection.server) {
           return {
             ok: false,
@@ -285,7 +463,7 @@ export function apply(ctx) {
           await resolved.manager.setPluginEnabled(resolved.row.entryId, false)
         }
 
-        const report = await probe()
+        const report = await probe(ctx)
         if (!report.ok) {
           return {
             ok: false,

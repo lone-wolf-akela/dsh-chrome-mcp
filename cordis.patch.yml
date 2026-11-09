@@ -15,17 +15,23 @@
         command: !!js 'process.execPath'
         env:
           ELECTRON_RUN_AS_NODE: '1'
+          # Where `chrome_bridge action=config` stores headless / isolated /
+          # userDataDir / viewport. Profile-scoped, so different DSH profiles can
+          # use different browser setups, and the package directory stays clean.
+          DSH_CHROME_MCP_CONFIG: !!js 'process.getBuiltinModule("node:url").fileURLToPath(new URL("chrome-mcp.json", ctx.baseUrl))'
         # launcher.mjs locates chrome-devtools-mcp and a Chromium-family browser
         # (Chrome, otherwise Edge), then runs the real MCP server. The path is
         # resolved from the profile so the bundle does not hard-code a user name.
         # A plain file URL is used instead of require.resolve: DSH evaluates this
         # expression outside the profile's CJS resolver, where a bare package
         # specifier does not resolve.
+        #
+        # Browser appearance/profile flags are NOT listed here: the launcher reads
+        # them from DSH_CHROME_MCP_CONFIG on every start, so `chrome_bridge` can
+        # switch between headless and a visible window, or between a throw-away and
+        # a persistent profile, without editing this file or restarting DSH.
         args:
           - !!js 'process.getBuiltinModule("node:url").fileURLToPath(new URL("node_modules/@local/dsh-chrome-mcp/launcher.mjs", ctx.baseUrl))'
-          - '--headless'
-          - '--isolated'
-          - '--viewport=1280x720'
           - '--no-usage-statistics'
           - '--no-performance-crux'
         # Lighthouse audits and trace capture can exceed the one-minute default.

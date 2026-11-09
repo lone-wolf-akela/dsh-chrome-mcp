@@ -17,15 +17,17 @@
  *
  * Modes:
  *   (no mode)   run the MCP server over stdio; used by @deepseek-ai/dsh-mcp-client
- *   --detect    print a JSON report about server/browser discovery and exit
+ *   --detect    print a JSON report about server/browser/config discovery and exit
  *   --probe     start the server, initialize, list tools, open a page, print JSON
  *
- * Every other argument is forwarded to chrome-devtools-mcp unchanged. The
- * launcher adds `--executablePath` only when a browser was found and the caller
- * did not ask for a specific browser (`--executablePath`, `--channel`,
- * `--browserUrl`, `--wsEndpoint` or `--autoConnect`).
+ * Every other argument is forwarded to chrome-devtools-mcp unchanged. Browser
+ * appearance and profile flags (headless, isolated, userDataDir, viewport) come
+ * from a JSON config file that `chrome_bridge action=config` writes, so they can
+ * change without editing this package; explicit forwarded flags still win.
  *
  * Environment:
+ *   DSH_CHROME_MCP_CONFIG  explicit path to the JSON config file (the bundle's
+ *                          patch points this at the profile directory)
  *   DSH_CHROME_MCP_ENTRY   explicit path to the package directory or to
  *                          build/src/bin/chrome-devtools-mcp.js
  *   DSH_CHROME_PATH        explicit browser executable to drive
@@ -34,8 +36,9 @@
  *                          alternative browser executable variables
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 
@@ -55,6 +58,37 @@ const HINT_INSTALL =
 const HINT_BROWSER =
   `No Chromium-family browser was found. Install Google Chrome, set DSH_CHROME_PATH to a\n` +
   `chrome.exe / msedge.exe path, or set DSH_CHROME_CHANNEL (stable|beta|dev|canary).`
+
+/** Browser appearance/profile defaults; overridden by the JSON config file. */
+const CONFIG_DEFAULTS = {
+  headless: true,
+  isolated: true,
+  userDataDir: '',
+  viewport: '1280x720',
+}
+
+function configFile() {
+  const explicit = process.env.DSH_CHROME_MCP_CONFIG?.trim()
+  if (explicit) return explicit
+  const home = process.env.USERPROFILE || process.env.HOME || homedir()
+  return home ? path.join(home, '.dsh', 'chrome-mcp.json') : null
+}
+
+function readConfig() {
+  const file = configFile()
+  const config = { ...CONFIG_DEFAULTS }
+  if (!file || !existsSync(file)) return { file, config, error: null }
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    if (typeof raw?.headless === 'boolean') config.headless = raw.headless
+    if (typeof raw?.isolated === 'boolean') config.isolated = raw.isolated
+    if (typeof raw?.userDataDir === 'string') config.userDataDir = raw.userDataDir.trim()
+    if (typeof raw?.viewport === 'string' && raw.viewport.trim()) config.viewport = raw.viewport.trim()
+    return { file, config, error: null }
+  } catch (error) {
+    return { file, config, error: String(error?.message ?? error) }
+  }
+}
 
 function readJson(file) {
   try {
@@ -262,6 +296,35 @@ function wantsOwnBrowser(forwarded) {
   })
 }
 
+const PROFILE_FLAGS = new Set([
+  '--userDataDir',
+  '--isolated',
+  '--channel',
+  '--browserUrl',
+  '-u',
+  '--wsEndpoint',
+  '-w',
+  '--autoConnect',
+])
+
+/** Browser appearance/profile flags the caller did not pass explicitly. */
+function configFlags(config, forwarded) {
+  const has = name => forwarded.some(argument => argument === name || argument.startsWith(`${name}=`))
+  const hasProfileChoice = forwarded.some(argument => PROFILE_FLAGS.has(argument.split('=')[0]))
+  const flags = []
+
+  if (!has('--headless') && !has('--no-headless') && config.headless) flags.push('--headless')
+
+  if (!hasProfileChoice) {
+    if (config.userDataDir) flags.push('--userDataDir', config.userDataDir)
+    else if (config.isolated) flags.push('--isolated')
+  }
+
+  if (!has('--viewport') && config.viewport) flags.push(`--viewport=${config.viewport}`)
+
+  return flags
+}
+
 function resolveLaunch(forwarded, { quiet = false } = {}) {
   const server = findServer()
   if (!server) {
@@ -269,13 +332,27 @@ function resolveLaunch(forwarded, { quiet = false } = {}) {
   }
   const browser = findBrowser()
   const channel = process.env.DSH_CHROME_CHANNEL?.trim() || null
-  const args = [server.entry, ...forwarded]
+  const { file: configPath, config, error: configError } = readConfig()
+
+  if (config.userDataDir && config.isolated) {
+    // A persistent profile is the reason to name a directory; keep one owner.
+    config.isolated = false
+  }
+  if (config.userDataDir) {
+    try {
+      mkdirSync(config.userDataDir, { recursive: true })
+    } catch {
+      // the browser reports a clearer error than we can here
+    }
+  }
+
+  const args = [server.entry, ...forwarded, ...configFlags(config, forwarded)]
   if (!wantsOwnBrowser(forwarded)) {
     if (channel) args.push('--channel', channel)
     else if (browser) args.push('--executablePath', browser.executable)
     else if (!quiet) console.error(`[dsh-chrome-mcp] ${HINT_BROWSER}`)
   }
-  return { ok: true, server, browser, channel, args }
+  return { ok: true, server, browser, channel, config, configPath, configError, args }
 }
 
 function detectReport() {
@@ -289,6 +366,11 @@ function detectReport() {
       : null,
     browser: launch.browser ?? null,
     channel: launch.channel ?? null,
+    config: {
+      path: launch.configPath ?? null,
+      ...(launch.config ?? CONFIG_DEFAULTS),
+      error: launch.configError ?? null,
+    },
     error: launch.ok ? null : launch.error,
     hint: launch.ok ? (launch.browser || launch.channel ? null : HINT_BROWSER) : HINT_INSTALL,
   }
@@ -431,6 +513,11 @@ async function probe(forwarded) {
     server: { entry: launch.server.entry, version: launch.server.version },
     browser: launch.browser ?? null,
     channel: launch.channel ?? null,
+    config: {
+      path: launch.configPath ?? null,
+      ...(launch.config ?? CONFIG_DEFAULTS),
+      error: launch.configError ?? null,
+    },
     tools: 0,
     toolSchemaBytes: 0,
     pages: 0,

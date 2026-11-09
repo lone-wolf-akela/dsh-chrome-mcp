@@ -72,10 +72,37 @@ Then start a session and call `chrome_bridge` with `action: 'on'`.
 
 - `on` — probe the browser, then mount the Chrome DevTools toolset and connect.
 - `off` — unmount it and free the context.
-- `status` — report `loaded`, `fiberPhase`, `chromeTools`, the detected server/browser, and the row diagnostic.
+- `status` — report `loaded`, `fiberPhase`, `chromeTools`, the detected server/browser, the stored config, and the row diagnostic.
 - `probe` — run the browser handshake once (initialize, `tools/list`, `list_pages`) and report, without mounting anything.
+- `config` — read the browser appearance/profile settings; add `headless`, `isolated`, `userDataDir` or `viewport` to persist new ones.
 
 Once loaded, the browser tools are named `mcp__chrome__<tool>`, for example `mcp__chrome__navigate_page`, `mcp__chrome__take_snapshot`, `mcp__chrome__take_screenshot`. Version 1.x requires a `pageId` on page-scoped tools: call `mcp__chrome__list_pages` first, then pass the number it reports.
+
+## Browser appearance and profile
+
+Settings live in a profile-scoped JSON file, `<profile>/chrome-mcp.json`, and are read by the launcher on every start. Change them through `chrome_bridge` — no package edit and no DSH restart:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `headless` | `true` | run without a window; `false` shows the real browser |
+| `isolated` | `true` | each launch uses a throw-away profile |
+| `userDataDir` | `''` | persistent profile directory; takes precedence over `isolated` |
+| `viewport` | `1280x720` | initial viewport |
+
+Common calls:
+
+```text
+# Watch the browser work while the agent drives it
+chrome_bridge action=config headless=false
+
+# Human sign-in + agent operation: keep cookies and logins across sessions
+chrome_bridge action=on headless=false userDataDir="C:\\Users\\me\\AppData\\Local\\dsh-chrome-profile"
+
+# Back to the privacy-friendly defaults
+chrome_bridge action=config headless=true isolated=true userDataDir=""
+```
+
+`config` (and `on` with these arguments) persists the values and remounts an already loaded toolset, so the next browser launch uses them immediately. The file is written atomically, so concurrent sessions never read a partial config. Arguments passed explicitly in `cordis.patch.yml` still win over the stored values.
 
 ## Configuration
 
@@ -92,11 +119,9 @@ Once loaded, the browser tools are named `mcp__chrome__<tool>`, for example `mcp
         command: !!js 'process.execPath'
         env:
           ELECTRON_RUN_AS_NODE: '1'
+          DSH_CHROME_MCP_CONFIG: !!js 'process.getBuiltinModule("node:url").fileURLToPath(new URL("chrome-mcp.json", ctx.baseUrl))'
         args:
           - !!js 'process.getBuiltinModule("node:url").fileURLToPath(new URL("node_modules/@local/dsh-chrome-mcp/launcher.mjs", ctx.baseUrl))'
-          - '--headless'
-          - '--isolated'
-          - '--viewport=1280x720'
           - '--no-usage-statistics'
           - '--no-performance-crux'
         toolCallTimeoutMs: 120000
@@ -113,7 +138,8 @@ Once loaded, the browser tools are named `mcp__chrome__<tool>`, for example `mcp
 
 - `command` and `args[0]` are resolved at load time: DSH's own executable runs `launcher.mjs` as Node, and the launcher path comes from the profile's `node_modules`, so nothing is hard-coded to a user name or profile.
 - `serverName: chrome` fixes the tool prefix: `mcp__chrome__<tool>`.
-- Every argument after the launcher path is forwarded to `chrome-devtools-mcp` unchanged. **Remove `--headless` and restart DSH** to watch the browser work; `--isolated` keeps a throw-away profile so automation never touches your normal browser data.
+- `DSH_CHROME_MCP_CONFIG` points the launcher at the profile's JSON config, which `chrome_bridge action=config` maintains. Browser flags (`headless`, `isolated`, `userDataDir`, `viewport`) are derived from it, so they never have to be edited here.
+- Every argument after the launcher path is forwarded to `chrome-devtools-mcp` unchanged; explicit flags such as `--headless` or `--userDataDir=<dir>` override the stored config.
 - The launcher adds `--executablePath <browser>` only when no browser was requested explicitly. `DSH_CHROME_CHANNEL=stable|beta|dev|canary` switches to Chrome channel resolution instead.
 - `--no-usage-statistics` opts out of the server's Google usage statistics; `--no-performance-crux` stops performance tools from sending trace URLs to the CrUX API.
 
@@ -127,7 +153,7 @@ Once loaded, the browser tools are named `mcp__chrome__<tool>`, for example `mcp
 
 - The first use of a profile launches a browser; cold start takes a few seconds.
 - One `chrome` server name per profile: the row is discovered by module name plus patch id `mcp-chrome`.
-- `--isolated` means each DSH session starts from a fresh browser profile: no saved logins or cookies across sessions. Drop the flag to reuse a persistent profile directory.
+- The default throw-away profile (`isolated: true`) keeps automation away from your normal browser data, but it also means no saved logins. For human sign-in work set `userDataDir`; that directory then holds the logins and cookies, so treat it as sensitive.
 - Tools that read or write local files (`upload_file`, workspace paths) are restricted to the OS temp directory unless you pass `--workspace <dir>`, because DSH's MCP client does not negotiate MCP roots.
 - Browser control is as powerful as it sounds: while the toolset is mounted, the agent can inspect and modify anything in that browser instance. `off` (or ending the session) unmounts it.
 
