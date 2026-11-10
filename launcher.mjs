@@ -41,6 +41,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
+import { normalizeMaximizedWindowPlacement } from './profile-window-state.mjs'
 
 const isWindows = process.platform === 'win32'
 const require = createRequire(import.meta.url)
@@ -338,12 +339,17 @@ function resolveLaunch(forwarded, { quiet = false } = {}) {
     // A persistent profile is the reason to name a directory; keep one owner.
     config.isolated = false
   }
+  let profileWindowState = null
   if (config.userDataDir) {
     try {
       mkdirSync(config.userDataDir, { recursive: true })
     } catch {
       // the browser reports a clearer error than we can here
     }
+    // Chromium restores a persisted maximized window even for headless
+    // launches, and chrome-devtools-mcp's viewport call is refused in that
+    // state; normalize it before the server (and its browser) starts.
+    profileWindowState = normalizeMaximizedWindowPlacement(config.userDataDir)
   }
 
   const args = [server.entry, ...forwarded, ...configFlags(config, forwarded)]
@@ -352,7 +358,7 @@ function resolveLaunch(forwarded, { quiet = false } = {}) {
     else if (browser) args.push('--executablePath', browser.executable)
     else if (!quiet) console.error(`[dsh-chrome-mcp] ${HINT_BROWSER}`)
   }
-  return { ok: true, server, browser, channel, config, configPath, configError, args }
+  return { ok: true, server, browser, channel, config, configPath, configError, profileWindowState, args }
 }
 
 function detectReport() {
@@ -371,6 +377,7 @@ function detectReport() {
       ...(launch.config ?? CONFIG_DEFAULTS),
       error: launch.configError ?? null,
     },
+    profileWindowState: launch.profileWindowState ?? null,
     error: launch.ok ? null : launch.error,
     hint: launch.ok ? (launch.browser || launch.channel ? null : HINT_BROWSER) : HINT_INSTALL,
   }
@@ -518,6 +525,7 @@ async function probe(forwarded) {
       ...(launch.config ?? CONFIG_DEFAULTS),
       error: launch.configError ?? null,
     },
+    profileWindowState: launch.profileWindowState ?? null,
     tools: 0,
     toolSchemaBytes: 0,
     pages: 0,

@@ -104,6 +104,8 @@ chrome_bridge action=config headless=true isolated=true userDataDir=""
 
 `config`（以及带这些参数的 `on`）会持久化配置，并在工具集已挂载时自动重挂载，下一次浏览器启动立即生效。文件采用原子写入，并发会话不会读到半截配置。`cordis.patch.yml` 里显式写出的参数优先级仍高于配置文件。
 
+Chromium 还会在持久 profile 中保存上次的窗口位置：只要有一次会话以最大化窗口结束，之后每次启动都会恢复成最大化。而 `chrome-devtools-mcp` 用 `Browser.setContentsSize` 设置视口，Chromium 在最大化状态下会拒绝该调用（`Restore window to normal state before setting content size`），于是浏览器工具集会彻底不可用。现在 `launcher.mjs` 会在启动 server 之前把持久化的最大化状态复位为普通窗口；当它改写了文件或读不到文件时，`status` / `probe` 的 `profileWindowState` 字段会给出说明。
+
 ## 配置
 
 `cordis.patch.yml`：
@@ -155,6 +157,7 @@ chrome_bridge action=config headless=true isolated=true userDataDir=""
 - 每个 profile 只能有一个 `chrome` server name：该行按模块名加 patch id `mcp-chrome` 定位。
 - 默认的一次性 profile（`isolated: true`）让自动化不碰日常浏览器数据，但也意味着不保留登录态；人工登录场景请设置 `userDataDir`，该目录会保存登录态与 Cookie，应按敏感数据对待。
 - 读写本地文件的工具（`upload_file`、workspace 路径）默认被限制在系统临时目录内，因为 DSH 的 MCP 客户端不协商 MCP roots；可用 `--workspace <dir>` 放宽。
+- 窗口状态守卫是尽力而为的：如果已有浏览器实例正用着同一个 profile，它可能在守卫执行后再写回最大化状态，下一次启动会再次修复；profile 的其它内容不会被改动。
 - 浏览器操控能力很强：工具集挂载期间，Agent 可以查看和修改该浏览器实例中的任何内容。`off`（或结束会话）即可卸载。
 
 ## 许可证

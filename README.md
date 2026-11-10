@@ -104,6 +104,8 @@ chrome_bridge action=config headless=true isolated=true userDataDir=""
 
 `config` (and `on` with these arguments) persists the values and remounts an already loaded toolset, so the next browser launch uses them immediately. The file is written atomically, so concurrent sessions never read a partial config. Arguments passed explicitly in `cordis.patch.yml` still win over the stored values.
 
+Chromium also persists the last window placement in a persistent profile, and one session that ended maximized makes every later launch restore a maximized window. `chrome-devtools-mcp` applies its viewport with `Browser.setContentsSize`, which Chromium refuses in that state (`Restore window to normal state before setting content size`), so a maximized window used to make the browser toolset unusable. `launcher.mjs` now normalizes a persisted maximized placement to a normal window before it starts the server; `status` and `probe` reports include `profileWindowState` when it rewrote the file or could not read it.
+
 ## Configuration
 
 `cordis.patch.yml`:
@@ -155,6 +157,7 @@ chrome_bridge action=config headless=true isolated=true userDataDir=""
 - One `chrome` server name per profile: the row is discovered by module name plus patch id `mcp-chrome`.
 - The default throw-away profile (`isolated: true`) keeps automation away from your normal browser data, but it also means no saved logins. For human sign-in work set `userDataDir`; that directory then holds the logins and cookies, so treat it as sensitive.
 - Tools that read or write local files (`upload_file`, workspace paths) are restricted to the OS temp directory unless you pass `--workspace <dir>`, because DSH's MCP client does not negotiate MCP roots.
+- The window-state guard is best effort: a browser instance still running with the same profile can rewrite the placement after the guard runs, and the next launch repairs it again. Nothing else in the profile is changed.
 - Browser control is as powerful as it sounds: while the toolset is mounted, the agent can inspect and modify anything in that browser instance. `off` (or ending the session) unmounts it.
 
 ## License

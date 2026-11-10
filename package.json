@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-chrome-mcp",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "description": "On-demand chrome-devtools-mcp browser toolset for DeepSeek Harness",
   "license": "MIT",
@@ -16,16 +16,21 @@
   "exports": {
     ".": "./index.js",
     "./launcher.mjs": "./launcher.mjs",
+    "./profile-window-state.mjs": "./profile-window-state.mjs",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
     "launcher.mjs",
+    "profile-window-state.mjs",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg"
   ],
+  "scripts": {
+    "test": "node --test test/profile-window-state.test.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

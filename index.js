@@ -307,6 +307,7 @@ export function apply(ctx) {
             browser: detection.browser ?? null,
             channel: detection.channel ?? null,
             config: detection.config ?? null,
+            profileWindowState: detection.profileWindowState ?? null,
             discoveryError: detection.ok ? null : (detection.error ?? null),
           }
         }
