@@ -62,7 +62,7 @@ npm install -g chrome-devtools-mcp@latest
 plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
 ```
 
-也可以把 `install_bundle` 指向本仓库的克隆目录。本包是配置加一个 Host 插件，没有安装脚本。
+也可以把 `install_bundle` 指向本仓库的克隆目录。本包是配置加一个 Host 插件和一个浏览器端，没有安装脚本。
 
 然后在会话中调用 `chrome_bridge`，参数 `action: 'on'`。
 
@@ -77,6 +77,14 @@ plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
 - `config` —— 读取浏览器外观/profile 设置；附加 `headless`、`isolated`、`userDataDir` 或 `viewport` 可持久化新值。
 
 挂载后，浏览器工具名为 `mcp__chrome__<tool>`，例如 `mcp__chrome__navigate_page`、`mcp__chrome__take_snapshot`、`mcp__chrome__take_screenshot`。1.x 版本的页面级工具要求 `pageId`：先调用 `mcp__chrome__list_pages`，再把返回的编号传进去。
+
+## 截图内嵌显示
+
+`take_screenshot` 返回的是真正的 MCP 图片内容块，DSH 的 MCP 客户端本来就会把它存成持久附件，模型也一直能看到图像。缺的是界面：没有专属视图的工具会落到通用卡片，而通用卡片会把非文本块序列化成 JSON，于是截图显示成 `{"type":"image","attachment":{…}}`。
+
+本插件包同时提供一个浏览器端 `client.js`，认领 `mcp__chrome__take_screenshot` 这一工具行，把结果显示成 **截图** 卡片：摘要行给出图片尺寸与大小，图片本身放在卡片的可展开正文里——与内置 `read_image` 工具的呈现方式一致，点击图片可查看完整大图。用 `filePath` 保存到文件的截图、当前模型路线拒绝图片的结果，以及失败的调用，仍然显示为可读的文本行。
+
+该视图按本包 patch 中固定的 `chrome` 服务器名注册；如果修改 `serverName`，请同步修改 `client.js` 里的 `SCREENSHOT_TOOL`。若安装/更新时页面已经启动，刷新一次 Web 界面即可加载新的浏览器端。
 
 ## 浏览器外观与 profile
 

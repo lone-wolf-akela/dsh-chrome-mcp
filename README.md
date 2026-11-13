@@ -62,7 +62,7 @@ From a DSH session, ask the agent to install the bundle, or use the plugin manag
 plugin_manager install_bundle  github:lone-wolf-akela/dsh-chrome-mcp
 ```
 
-A clone of this repository works too: point `install_bundle` at the checkout directory. The bundle is configuration plus one Host plugin and no install scripts.
+A clone of this repository works too: point `install_bundle` at the checkout directory. The bundle is configuration plus one Host plugin and one browser half, with no install scripts.
 
 Then start a session and call `chrome_bridge` with `action: 'on'`.
 
@@ -77,6 +77,14 @@ Then start a session and call `chrome_bridge` with `action: 'on'`.
 - `config` — read the browser appearance/profile settings; add `headless`, `isolated`, `userDataDir` or `viewport` to persist new ones.
 
 Once loaded, the browser tools are named `mcp__chrome__<tool>`, for example `mcp__chrome__navigate_page`, `mcp__chrome__take_snapshot`, `mcp__chrome__take_screenshot`. Version 1.x requires a `pageId` on page-scoped tools: call `mcp__chrome__list_pages` first, then pass the number it reports.
+
+## Screenshots render inline
+
+`take_screenshot` returns a real MCP image block, and DSH's MCP client already admits it as a durable attachment, so the model sees the pixels either way. The transcript was the gap: a tool without a dedicated view falls through to the generic card, which flattens non-text blocks to JSON — the screenshot appeared as `{"type":"image","attachment":{…}}`.
+
+This bundle also ships a browser half, `client.js`, that claims the `mcp__chrome__take_screenshot` tool row and renders the result as a **Screenshot** card: the summary row names the image dimensions and size, and the image itself sits in the row's expandable body — the same presentation as the built-in `read_image` tool. Click the image for a full-size view. A screenshot saved with `filePath`, an image the current model route refused, and a failed call all keep a readable text row.
+
+The view is keyed to the `chrome` server name this bundle's patch sets. If you change `serverName`, change `SCREENSHOT_TOOL` in `client.js` to match. A browser half that did not exist when the page booted needs one page reload.
 
 ## Browser appearance and profile
 
